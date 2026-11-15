@@ -1,0 +1,83 @@
+name: Prodigy metadata validation
+
+on:
+  push:
+    branches: [validation/prodigy-metadata-20261115]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 638e748d92313255a3e48465cc9bbc6bbb13f400
+          fetch-depth: 2
+          sparse-checkout: |
+            unstructured
+            test_unstructured/staging
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies for the public staging API
+        run: >-
+          python -m pip install
+          "pytest>=9.0.2,<10"
+          "ruff>=0.15.0,<1"
+          "requests>=2.32.5,<3"
+          "typing-extensions>=4.15.0,<5"
+      - name: Verify the same regressions fail on the original production code
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          source = pathlib.Path("unstructured/staging/prodigy.py")
+          revised = source.read_bytes()
+          baseline = subprocess.check_output([
+              "git", "show",
+              "ac932052e6e0ba3feab8a6e96b6d4480218e009f:unstructured/staging/prodigy.py",
+          ])
+          try:
+              source.write_bytes(baseline)
+              result = subprocess.run([
+                  sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/staging/test_prodigy_metadata_ownership.py",
+                  "--junitxml=baseline.xml",
+              ])
+              report = ET.parse("baseline.xml").getroot()
+              failures = report.findall(".//failure")
+              errors = report.findall(".//error")
+              assert result.returncode == 1, result.returncode
+              assert len(failures) == 4, len(failures)
+              assert not errors, errors
+          finally:
+              source.write_bytes(revised)
+      - name: Verify revised public API and existing Prodigy behavior
+        run: >-
+          python -m pytest -q
+          test_unstructured/staging/test_prodigy.py
+          test_unstructured/staging/test_prodigy_metadata_ownership.py
+          --junitxml=revised.xml
+      - name: Check style and source integrity
+        run: |
+          ruff check unstructured/staging/prodigy.py test_unstructured/staging/test_prodigy_metadata_ownership.py
+          ruff format --check unstructured/staging/prodigy.py test_unstructured/staging/test_prodigy_metadata_ownership.py
+          git diff --exit-code
+          git diff --check
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prodigy-metadata-test-results
+          path: |
+            baseline.xml
+            revised.xml
