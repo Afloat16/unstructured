@@ -56,7 +56,7 @@ def test_top_level_columns_are_reserved_across_the_whole_batch(reverse):
         elements.reverse()
 
     frame = convert_to_dataframe(iter(elements))
-    text_row = frame[frame["type"] == "Uncategorized"].iloc[0]
+    text_row = frame[frame["type"] == "UncategorizedText"].iloc[0]
     checkbox_row = frame[frame["type"] == "CheckBox"].iloc[0]
 
     assert pd.isna(text_row["checked"])
@@ -83,7 +83,7 @@ def test_noncolliding_metadata_keeps_its_columns_and_dtype_options():
     assert str(frame["page_number"].dtype) == "Int64"
     assert frame.at[0, "data_source_url"] == "s3://bucket/source.txt"
     assert frame.at[0, "metadata_text"] == "already prefixed"
-    assert not any(column.startswith("data_source_record_locator") for column in frame)
+    assert frame.at[0, "data_source_record_locator"] == {"key": "source.txt"}
 
 
 def test_empty_input_still_produces_an_empty_dataframe():
