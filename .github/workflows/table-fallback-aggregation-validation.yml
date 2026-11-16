@@ -1,0 +1,115 @@
+name: Table fallback aggregation validation
+
+on:
+  push:
+    branches: [validation/table-fallback-aggregation-20261116]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DO_NOT_TRACK: "1"
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            unstructured
+            test_unstructured/metrics
+            example-docs/test_evaluate_files
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install real evaluation dependencies
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.10.0+cpu" "torchvision==0.25.0+cpu"
+          python -m pip install "unstructured-inference==1.6.12" "pytest>=9,<10" pytest-mock "ruff>=0.15,<1" beautifulsoup4 "requests>=2.32.5,<3" "typing-extensions>=4.15,<5" "regex>=2024,<2027" "lxml>=5,<7" "emoji>=2.15,<3" "psutil>=7.2.2,<8" pandas numpy tqdm click rapidfuzz tabulate
+      - name: Fetch reviewed sources
+        run: git fetch --depth=1 origin 967170414a46fd6a506d9b8b7c6d17755a318fd2 ad56303cfae517612afcd5db85d3b4e303aa0d03
+      - name: Reproduce the eight public calculator regressions
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          source = pathlib.Path("unstructured/metrics/evaluate.py")
+          revised = source.read_bytes()
+          try:
+              source.write_bytes(subprocess.check_output([
+                  "git", "show",
+                  "967170414a46fd6a506d9b8b7c6d17755a318fd2:unstructured/metrics/evaluate.py",
+              ]))
+              result = subprocess.run([
+                  sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/metrics/test_table_representation_fallback.py",
+                  "-k", "false_positive_fallback",
+                  "--junitxml=reviewed.xml",
+              ])
+              report = ET.parse("reviewed.xml").getroot()
+              assert result.returncode == 1
+              assert len(report.findall(".//testcase")) == 8
+              assert len(report.findall(".//failure")) == 8
+              assert not report.findall(".//error")
+          finally:
+              source.write_bytes(revised)
+      - name: Verify fallback sensitivity through calculator exports
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          source = pathlib.Path("unstructured/metrics/table/table_extraction.py")
+          revised = source.read_bytes()
+          try:
+              source.write_bytes(subprocess.check_output([
+                  "git", "show",
+                  "ad56303cfae517612afcd5db85d3b4e303aa0d03:unstructured/metrics/table/table_extraction.py",
+              ]))
+              result = subprocess.run([
+                  sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/metrics/test_table_representation_fallback.py",
+                  "-k", "false_positive_fallback",
+                  "--junitxml=fallback-mutation.xml",
+              ])
+              report = ET.parse("fallback-mutation.xml").getroot()
+              assert result.returncode == 1
+              assert len(report.findall(".//testcase")) == 8
+              assert len(report.findall(".//failure")) == 4
+              assert not report.findall(".//error")
+          finally:
+              source.write_bytes(revised)
+      - name: Verify calculator exports and neighboring metrics
+        run: >-
+          python -m pytest -q
+          test_unstructured/metrics/test_table_representation_fallback.py
+          test_unstructured/metrics/test_table_metric_aggregation.py
+          test_unstructured/metrics/test_evaluate.py
+          test_unstructured/metrics/test_table_formats.py
+          test_unstructured/metrics/test_table_alignment.py
+          --junitxml=revised.xml
+      - name: Verify style and tested source identity
+        run: |
+          ruff check unstructured/metrics/evaluate.py test_unstructured/metrics/test_table_metric_aggregation.py test_unstructured/metrics/test_table_representation_fallback.py
+          ruff format --check unstructured/metrics/evaluate.py test_unstructured/metrics/test_table_metric_aggregation.py test_unstructured/metrics/test_table_representation_fallback.py
+          git diff --exit-code
+          git diff --check
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: table-fallback-aggregation-results
+          path: |
+            reviewed.xml
+            fallback-mutation.xml
+            revised.xml
