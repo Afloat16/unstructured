@@ -54,7 +54,7 @@ def test_header_only_worksheet_keeps_its_requested_headers(
         from lxml import html
 
         document = html.fromstring(table.metadata.text_as_html)
-        assert document.xpath("//th/text()") == headers
+        assert document.xpath("//tr/*/text()") == headers
     else:
         assert table.metadata.text_as_html is None
 
