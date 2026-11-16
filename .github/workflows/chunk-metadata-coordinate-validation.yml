@@ -62,7 +62,6 @@ jobs:
       - name: Run regression cases and neighboring public API suites
         run: >-
           python -m pytest -q
-          test_unstructured/chunking/test_metadata_ownership.py
           test_unstructured/partition/test_text_email_coordinates.py
           test_unstructured/chunking
           test_unstructured/documents/test_elements.py
