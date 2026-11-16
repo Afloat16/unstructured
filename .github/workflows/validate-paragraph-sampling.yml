@@ -1,0 +1,101 @@
+name: Paragraph sampling performance validation
+
+on:
+  push:
+    branches: [validation/20261116-bounded-paragraph-sampling]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            unstructured
+            test_unstructured
+            example-docs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install public API dependencies
+        run: >-
+          python -m pip install -e '.[chunking-tokens,docx]'
+          'pytest>=9,<10' pytest-mock 'ruff>=0.15,<1' 'pandas>=2,<3'
+      - name: Check changed-file style
+        run: |
+          ruff check unstructured/cleaners/core.py test_unstructured/cleaners/test_paragraph_sampling.py
+          ruff format --check unstructured/cleaners/core.py test_unstructured/cleaners/test_paragraph_sampling.py
+      - name: Fetch the pinned original production source
+        run: git fetch --depth=1 origin ac932052e6e0ba3feab8a6e96b6d4480218e009f
+      - name: Validate behavior and measure the original source
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = Path("unstructured/cleaners/core.py")
+          saved = path.read_bytes()
+          try:
+              path.write_bytes(subprocess.check_output(["git", "show", "ac932052e6e0ba3feab8a6e96b6d4480218e009f:unstructured/cleaners/core.py"]))
+              subprocess.run([sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/cleaners/test_paragraph_sampling.py",
+                  "--junitxml=baseline.xml"], check=True)
+              report = ET.parse("baseline.xml").getroot()
+              assert len(report.findall(".//testcase")) == 9
+              assert not report.findall(".//failure")
+              assert not report.findall(".//error")
+              output = subprocess.check_output([sys.executable, "validate_paragraph_sampling.py"], text=True)
+              Path("baseline-benchmark.json").write_text(output)
+              print("BASELINE_BENCHMARK", output)
+          finally:
+              path.write_bytes(saved)
+      - name: Run behavior controls and neighboring public API suites
+        run: >-
+          python -m pytest -q
+          test_unstructured/cleaners/test_paragraph_sampling.py
+          test_unstructured/cleaners/test_core.py
+          test_unstructured/partition/test_text.py
+          --junitxml=results.xml
+      - name: Measure the final source and compare output and memory
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import subprocess
+          import sys
+
+          before = json.loads(Path("baseline-benchmark.json").read_text())
+          output = subprocess.check_output([sys.executable, "validate_paragraph_sampling.py"], text=True)
+          Path("final-benchmark.json").write_text(output)
+          after = json.loads(output)
+          print("FINAL_BENCHMARK", output)
+          assert before["output_sha256"] == after["output_sha256"]
+          assert before["output_chars"] == after["output_chars"]
+          assert after["tracemalloc_peak_bytes"] < before["tracemalloc_peak_bytes"] * 0.8
+          print("PEAK_RATIO", after["tracemalloc_peak_bytes"] / before["tracemalloc_peak_bytes"])
+          print("TIME_RATIO", after["median_seconds"] / before["median_seconds"])
+      - name: Record source and dependency identities
+        if: always()
+        run: |
+          git rev-parse HEAD
+          git diff --exit-code
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paragraph-sampling-results
+          path: |
+            baseline.xml
+            results.xml
+            baseline-benchmark.json
+            final-benchmark.json
