@@ -1,0 +1,93 @@
+name: Record and extraction validation
+
+on:
+  push:
+    branches: [validation/20261116-record-extraction]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            unstructured
+            test_unstructured
+            example-docs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install public API dependencies
+        run: >-
+          python -m pip install -e '.[chunking-tokens]'
+          'pytest>=9,<10' pytest-mock 'ruff>=0.15,<1' 'pandas>=2,<3'
+      - name: Check changed-file style
+        run: |
+          ruff check unstructured/file_utils/ndjson.py unstructured/cleaners/extract.py test_unstructured/file_utils/test_ndjson_formatting.py test_unstructured/cleaners/test_extract_short_circuit.py
+          ruff format --check unstructured/file_utils/ndjson.py unstructured/cleaners/extract.py test_unstructured/file_utils/test_ndjson_formatting.py test_unstructured/cleaners/test_extract_short_circuit.py
+      - name: Fetch the pinned original production source
+        run: git fetch --depth=1 origin ac932052e6e0ba3feab8a6e96b6d4480218e009f
+      - name: Reproduce regressions and compare extraction work
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          files = ["unstructured/file_utils/ndjson.py","unstructured/cleaners/extract.py"]
+          benchmark = """
+          import json
+          import timeit
+          from statistics import median
+          from unstructured.cleaners.extract import extract_text_before, extract_text_after
+          text = 'header|' + ('value|' * 500000) + 'footer'
+          print(json.dumps({fn.__name__: {'seconds_per_call': median(timeit.repeat(lambda: fn(text, r'\\|', strip=False), number=5, repeat=5)) / 5, 'bytes': len(text), 'matches': 500001} for fn in (extract_text_before, extract_text_after)}))
+          """
+          saved = {name: Path(name).read_bytes() for name in files}
+          try:
+              for name in files:
+                  Path(name).write_bytes(subprocess.check_output(["git", "show", f"ac932052e6e0ba3feab8a6e96b6d4480218e009f:{name}"]))
+              result = subprocess.run([sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/file_utils/test_ndjson_formatting.py",
+                  "test_unstructured/cleaners/test_extract_short_circuit.py",
+                  "--junitxml=baseline.xml"])
+              report = ET.parse("baseline.xml").getroot()
+              assert result.returncode == 1, result.returncode
+              assert len(report.findall(".//failure")) == 11
+              assert len(report.findall(".//testcase")) == 13
+              assert not report.findall(".//error")
+              print("BASELINE_BENCHMARK", subprocess.check_output([sys.executable, "-c", benchmark], text=True))
+          finally:
+              for name, content in saved.items():
+                  Path(name).write_bytes(content)
+          print("FIXED_BENCHMARK", subprocess.check_output([sys.executable, "-c", benchmark], text=True))
+      - name: Run regression cases and neighboring public API suites
+        run: >-
+          python -m pytest -q
+          test_unstructured/file_utils/test_ndjson_formatting.py
+          test_unstructured/cleaners/test_extract_short_circuit.py
+          test_unstructured/cleaners/test_extract.py
+          test_unstructured/partition/test_ndjson.py
+          --junitxml=results.xml
+      - name: Record source and dependency identities
+        if: always()
+        run: |
+          git rev-parse HEAD
+          git diff --exit-code
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: record-extraction-results
+          path: |
+            baseline.xml
+            results.xml
