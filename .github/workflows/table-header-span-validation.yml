@@ -43,7 +43,11 @@ jobs:
       - name: Compare sparse-case HTML with the original base
         shell: python
         run: |
+          import pathlib
           import subprocess
+          import sys
+
+          sys.path.insert(0, str(pathlib.Path.cwd()))
           from unstructured.metrics.table.table_extraction import deckerd_table_to_html
 
           cells = [
