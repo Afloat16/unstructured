@@ -1,0 +1,92 @@
+name: XML native node retention validation
+
+on:
+  push:
+    branches: [validation/20261116-xml-native-nodes]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            unstructured
+            test_unstructured
+            example-docs
+            validation
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install XML dependencies
+        run: >-
+          python -m pip install -e '.[chunking-tokens,docx]'
+          'pytest>=9,<10' pytest-mock 'ruff>=0.15,<1' 'pandas>=2,<3'
+      - name: Check changed-file style
+        run: |
+          ruff check unstructured/partition/xml.py test_unstructured/partition/test_xml_native_nodes.py
+          ruff format --check unstructured/partition/xml.py test_unstructured/partition/test_xml_native_nodes.py
+      - name: Fetch the pinned original production source
+        run: git fetch --depth=1 origin ac932052e6e0ba3feab8a6e96b6d4480218e009f
+      - name: Compare real native-memory retention and identical output
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          import subprocess
+          import sys
+
+          filename = "unstructured/partition/xml.py"
+          saved = Path(filename).read_bytes()
+          measured = {}
+          try:
+              for variant in ("baseline", "final"):
+                  if variant == "baseline":
+                      Path(filename).write_bytes(subprocess.check_output(["git", "show", f"ac932052e6e0ba3feab8a6e96b6d4480218e009f:{filename}"]))
+                  else:
+                      Path(filename).write_bytes(saved)
+                  subprocess.run([sys.executable, "-m", "pytest", "-q",
+                      "test_unstructured/partition/test_xml_native_nodes.py"], check=True)
+                  measured[variant] = {}
+                  for kind in ("elements", "comments"):
+                      output = subprocess.check_output([sys.executable,
+                          "validation/xml_native_nodes.py", kind, "1000000"], text=True)
+                      result = json.loads(output.strip().splitlines()[-1])
+                      measured[variant][kind] = result
+                      print(variant, json.dumps(result), flush=True)
+          finally:
+              Path(filename).write_bytes(saved)
+          Path("native-memory-results.json").write_text(json.dumps(measured, indent=2))
+          for kind in ("elements", "comments"):
+              before = measured["baseline"][kind]
+              after = measured["final"][kind]
+              assert before["output_count"] == after["output_count"]
+              assert before["output_sha256"] == after["output_sha256"]
+              assert after["added_peak_kb"] < before["added_peak_kb"] * 0.5
+      - name: Run regression cases and existing XML suite
+        run: >-
+          python -m pytest -q
+          test_unstructured/partition/test_xml_native_nodes.py
+          test_unstructured/partition/test_xml.py
+          --junitxml=results.xml
+      - name: Record source and dependency identities
+        if: always()
+        run: |
+          git rev-parse HEAD
+          git diff --exit-code
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xml-native-node-results
+          path: |
+            native-memory-results.json
+            results.xml
