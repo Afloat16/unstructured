@@ -4,11 +4,15 @@ import json
 import os
 
 import pytest
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from google.oauth2.service_account import Credentials
 
 from unstructured.embed.vertexai import VertexAIEmbeddingConfig
+
+
+@pytest.fixture(scope="module", autouse=True)
+def vertex_dependencies():
+    pytest.importorskip("langchain_google_vertexai", minversion="3.2.0")
+    pytest.importorskip("langchain")
+    pytest.importorskip("cryptography")
 
 
 @pytest.fixture
@@ -32,11 +36,15 @@ def credential_environment(tmp_path, monkeypatch):
 
 
 @pytest.fixture(scope="module")
-def signing_key():
+def signing_key(vertex_dependencies):
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
 def service_account_config(project, signing_key):
+    from cryptography.hazmat.primitives import serialization
+
     return VertexAIEmbeddingConfig(
         model_name="gemini-embedding-001",
         api_key=json.dumps(
@@ -60,6 +68,10 @@ def service_account_config(project, signing_key):
 def test_client_receives_its_own_parsed_credentials_and_project(
     project, signing_key, credential_environment
 ):
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from google.oauth2.service_account import Credentials
+
     client = service_account_config(project, signing_key).get_client()
     try:
         assert isinstance(client.credentials, Credentials)
