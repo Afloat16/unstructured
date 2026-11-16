@@ -140,6 +140,18 @@ class TextElementHtml(ElementHtml):
     _html_tag = "p"
 
 
+class CodeSnippetElementHtml(ElementHtml):
+    """Render code as literal, preformatted content."""
+
+    _html_tag = "pre"
+
+    def _inject_html_element_content(self, element_html: Tag, **kwargs: Any) -> None:
+        """Keep indentation and leading newlines inside a code child."""
+        code_html = Tag(name="code")
+        code_html.string = self.element.text
+        element_html.append(code_html)
+
+
 class UnorderedListElementHtml(ElementHtml):
     _html_tag = "ul"
 
@@ -236,7 +248,7 @@ TYPE_TO_HTML_MAP = {
     ElementType.FOOTNOTE: ElementHtml,
     ElementType.PAGE_FOOTER: ElementHtml,
     ElementType.PAGE_NUMBER: ElementHtml,
-    ElementType.CODE_SNIPPET: ElementHtml,
+    ElementType.CODE_SNIPPET: CodeSnippetElementHtml,
     ElementType.FORM_KEYS_VALUES: ElementHtml,
     ElementType.DOCUMENT_DATA: ElementHtml,
 }
@@ -330,9 +342,13 @@ def elements_to_html(
     exclude_binary_image_data: bool = False,
     no_group_by_page: bool = False,
 ) -> str:
+    """Export elements, falling back to document order when page metadata is incomplete."""
     soup = BeautifulSoup(HTML_TEMPLATE, HTML_PARSER)
     if soup.body is None:
         raise ValueError("Body tag not found in the HTML template")
+    no_group_by_page = no_group_by_page or any(
+        element.metadata.page_number is None for element in elements
+    )
     elements_html = (
         _elements_to_html_tags(elements, exclude_binary_image_data)
         if no_group_by_page

@@ -30,8 +30,8 @@ jobs:
           'pytest>=9,<10' pytest-mock 'ruff>=0.15,<1' 'pandas>=2,<3'
       - name: Check changed-file style
         run: |
-          ruff check test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/chunking/test_reconstructed_table_identity.py test_unstructured/partition/html/test_code_snippet_export.py test_unstructured/partition/html/test_unpaged_export.py
-          ruff format --check test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/chunking/test_reconstructed_table_identity.py test_unstructured/partition/html/test_code_snippet_export.py test_unstructured/partition/html/test_unpaged_export.py
+          ruff check unstructured/documents/elements.py unstructured/chunking/dispatch.py unstructured/partition/html/convert.py test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/chunking/test_reconstructed_table_identity.py test_unstructured/partition/html/test_code_snippet_export.py test_unstructured/partition/html/test_unpaged_export.py
+          ruff format --check unstructured/documents/elements.py unstructured/chunking/dispatch.py unstructured/partition/html/convert.py test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/chunking/test_reconstructed_table_identity.py test_unstructured/partition/html/test_code_snippet_export.py test_unstructured/partition/html/test_unpaged_export.py
       - name: Run regression cases and neighboring public API suites
         run: >-
           python -m pytest -q

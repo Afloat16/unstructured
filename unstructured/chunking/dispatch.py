@@ -218,7 +218,7 @@ def _merge_table_chunks(chunks: list[TableChunk]) -> Table:
     else:
         metadata.text_as_html = None
 
-    return Table(text=text, metadata=metadata)
+    return Table(text=text, element_id=chunks[0].metadata.table_id, metadata=metadata)
 
 
 def _num_carried_over_header_rows(chunk: TableChunk) -> int:
