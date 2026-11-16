@@ -1,0 +1,96 @@
+name: Chunk metadata compatibility validation
+
+on:
+  push:
+    branches: [validation/chunk-metadata-20261116]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+          sparse-checkout: |
+            unstructured
+            test_unstructured
+            scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install focused public-API test dependencies
+        run: >-
+          python -m pip install
+          "pytest>=9.0.2,<10"
+          "pytest-mock>=3.15.1,<4"
+          "ruff>=0.15.0,<1"
+          "requests>=2.32.5,<3"
+          "typing-extensions>=4.15.0,<5"
+          "regex>=2024,<2027"
+          "lxml>=5,<7"
+          "emoji>=2.15,<3"
+          "psutil>=7.2.2,<8"
+          "tiktoken>=0.12,<1"
+      - name: Verify historical rejection and reviewed-head regression
+        shell: python
+        run: |
+          import pathlib
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          source = pathlib.Path("unstructured/chunking/base.py")
+          revised = source.read_bytes()
+          tests = "test_unstructured/chunking/test_metadata_consolidation_work.py"
+          try:
+              for ref, name, selection, failures, test_count in [
+                  ("5390c569625e8e66254a55a6446757b2d2abe492", "original",
+                   "rejects_non_list or accepts_list_subclasses", 0, 40),
+                  ("124560b7a785f10b9db22b77d71c15d3b6c68a1c", "reviewed",
+                   "", 32, 48),
+              ]:
+                  source.write_bytes(subprocess.check_output([
+                      "git", "show", f"{ref}:unstructured/chunking/base.py",
+                  ]))
+                  command = [
+                      sys.executable, "-m", "pytest", "-q", tests,
+                      f"--junitxml={name}.xml",
+                  ]
+                  if selection:
+                      command.extend(["-k", selection])
+                  result = subprocess.run(command)
+                  report = ET.parse(f"{name}.xml").getroot()
+                  assert result.returncode == (1 if failures else 0), result.returncode
+                  assert len(report.findall(".//failure")) == failures
+                  assert len(report.findall(".//testcase")) == test_count
+                  assert not report.findall(".//error")
+          finally:
+              source.write_bytes(revised)
+      - name: Verify revised chunking behavior
+        run: >-
+          python -m pytest -q
+          test_unstructured/chunking/test_base.py
+          test_unstructured/chunking/test_metadata_consolidation_work.py
+          --junitxml=revised.xml
+      - name: Check style and source integrity
+        run: |
+          ruff check unstructured/chunking/base.py test_unstructured/chunking/test_metadata_consolidation_work.py
+          ruff format --check unstructured/chunking/base.py test_unstructured/chunking/test_metadata_consolidation_work.py
+          git diff --exit-code
+          git diff --check
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chunk-metadata-compatibility-results
+          path: |
+            original.xml
+            reviewed.xml
+            revised.xml
