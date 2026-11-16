@@ -1,0 +1,60 @@
+name: Additional public API probes
+on:
+  push:
+    branches: [validation/20261116-additional-probes]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            unstructured
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e . 'pandas>=2,<3'
+      - name: Record actual outputs
+        shell: python
+        run: |
+          import io
+          import json
+          from unstructured.partition.html import partition_html
+          from unstructured.partition.csv import partition_csv
+          from unstructured.documents.elements import Text, ElementMetadata
+          from unstructured.staging.base import convert_to_dataframe
+          from unstructured.staging.prodigy import stage_csv_for_prodigy
+
+          for declaration in ("utf-8", "iso-8859-1", "utf-16"):
+              markup = f'<?xml version="1.0" encoding="{declaration}"?><html><body><p>Résumé 中文</p></body></html>'
+              try:
+                  out = partition_html(text=markup, languages=[""])
+                  print("HTML_DECLARATION", declaration, json.dumps([e.text for e in out], ensure_ascii=False))
+              except Exception as exc:
+                  print("HTML_DECLARATION_ERROR", declaration, type(exc).__name__, str(exc))
+
+          metadata = ElementMetadata()
+          metadata.text = "metadata text"
+          metadata.type = "metadata type"
+          metadata.element_id = "metadata id"
+          metadata.embeddings = [9.0]
+          source = Text("source text", element_id="source id", embeddings=[1.0], metadata=metadata)
+          print("DATAFRAME_COLLISION", convert_to_dataframe([source]).to_dict(orient="records"))
+
+          for values in ({"ID": "metadata id"}, {"Text": "metadata text"}, {"Tag": "first", "tag": "second"}):
+              try:
+                  print("PRODIGY_COLUMNS", values, repr(stage_csv_for_prodigy([Text("source", element_id="source-id")], metadata=[values])))
+              except Exception as exc:
+                  print("PRODIGY_COLUMNS_ERROR", values, type(exc).__name__, str(exc))
+
+          for payload in ('"label","label"', '\ufeff"label","label"\nA,B\n'):
+              try:
+                  out = partition_csv(file=io.BytesIO(payload.encode("utf-8")), include_header=True, languages=[""])
+                  print("CSV_HEADERS", repr(payload), [e.metadata.text_as_html for e in out])
+              except Exception as exc:
+                  print("CSV_HEADERS_ERROR", repr(payload), type(exc).__name__, str(exc))
