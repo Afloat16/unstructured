@@ -342,13 +342,9 @@ def elements_to_html(
     exclude_binary_image_data: bool = False,
     no_group_by_page: bool = False,
 ) -> str:
-    """Export elements, falling back to document order when page metadata is incomplete."""
     soup = BeautifulSoup(HTML_TEMPLATE, HTML_PARSER)
     if soup.body is None:
         raise ValueError("Body tag not found in the HTML template")
-    no_group_by_page = no_group_by_page or any(
-        element.metadata.page_number is None for element in elements
-    )
     elements_html = (
         _elements_to_html_tags(elements, exclude_binary_image_data)
         if no_group_by_page

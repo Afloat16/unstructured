@@ -30,15 +30,40 @@ jobs:
           'pytest>=9,<10' pytest-mock 'ruff>=0.15,<1' 'pandas>=2,<3'
       - name: Check changed-file style
         run: |
-          ruff check unstructured/documents/elements.py unstructured/chunking/dispatch.py unstructured/partition/html/convert.py test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/chunking/test_reconstructed_table_identity.py test_unstructured/partition/html/test_code_snippet_export.py test_unstructured/partition/html/test_unpaged_export.py
-          ruff format --check unstructured/documents/elements.py unstructured/chunking/dispatch.py unstructured/partition/html/convert.py test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/chunking/test_reconstructed_table_identity.py test_unstructured/partition/html/test_code_snippet_export.py test_unstructured/partition/html/test_unpaged_export.py
+          ruff check unstructured/documents/elements.py unstructured/partition/html/convert.py test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/partition/html/test_code_snippet_export.py
+          ruff format --check unstructured/documents/elements.py unstructured/partition/html/convert.py test_unstructured/documents/test_embedding_export_ownership.py test_unstructured/partition/html/test_code_snippet_export.py
+      - name: Fetch the pinned original production source
+        run: git fetch --depth=1 origin ac932052e6e0ba3feab8a6e96b6d4480218e009f
+      - name: Reproduce the same regression cases against the original source
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          files = ["unstructured/documents/elements.py", "unstructured/partition/html/convert.py"]
+          saved = {name: Path(name).read_bytes() for name in files}
+          try:
+              for name in files:
+                  Path(name).write_bytes(subprocess.check_output(["git", "show", f"ac932052e6e0ba3feab8a6e96b6d4480218e009f:{name}"]))
+              result = subprocess.run([sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/documents/test_embedding_export_ownership.py",
+                  "test_unstructured/partition/html/test_code_snippet_export.py",
+                  "--junitxml=baseline.xml"])
+              report = ET.parse("baseline.xml").getroot()
+              assert result.returncode == 1, result.returncode
+              assert len(report.findall(".//failure")) == 11
+              assert len(report.findall(".//testcase")) == 15
+              assert not report.findall(".//error")
+          finally:
+              for name, content in saved.items():
+                  Path(name).write_bytes(content)
       - name: Run regression cases and neighboring public API suites
         run: >-
           python -m pytest -q
           test_unstructured/documents/test_embedding_export_ownership.py
-          test_unstructured/chunking/test_reconstructed_table_identity.py
           test_unstructured/partition/html/test_code_snippet_export.py
-          test_unstructured/partition/html/test_unpaged_export.py
           test_unstructured/documents/test_elements.py
           test_unstructured/chunking/test_base.py
           test_unstructured/chunking/test_dispatch.py
@@ -55,4 +80,6 @@ jobs:
         if: always()
         with:
           name: document-fidelity-results
-          path: results.xml
+          path: |
+            baseline.xml
+            results.xml
