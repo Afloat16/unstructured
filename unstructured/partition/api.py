@@ -95,7 +95,10 @@ def partition_via_api(
 
     # Note(austin) - the sdk takes the base url, but we have the full api_url
     # For consistency, just strip off the path when it's given
-    base_url = api_url[:-19] if "/general/v0/general" in api_url else api_url
+    base_url = api_url.rstrip("/")
+    endpoint_path = "/general/v0/general"
+    if base_url.endswith(endpoint_path):
+        base_url = base_url[: -len(endpoint_path)]
     sdk = UnstructuredClient(api_key_auth=api_key, server_url=base_url)
 
     if filename is not None:
