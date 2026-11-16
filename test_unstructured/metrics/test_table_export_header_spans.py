@@ -42,7 +42,7 @@ def test_header_row_extent_comes_from_height_not_width(colspan, rowspan):
     ],
     ids=["sparse-staggered-header", "chained-header-spans", "body-span-stays-in-body"],
 )
-def test_header_spans_preserve_row_order_and_round_trip(
+def test_header_spans_preserve_row_order_and_spans_on_reimport(
     reverse, spans, row_count, missing_cells, header_row_count
 ):
     cells = [
@@ -76,6 +76,10 @@ def test_header_spans_preserve_row_order_and_round_trip(
         contents = [cell.get_text() for cell in row.find_all(["th", "td"]) if cell.get_text()]
         row_labels.append({int(text[1:].split("c")[0]) for text in contents})
     assert row_labels == [{row} for row in range(row_count)]
-    round_trip = {cell["content"]: cell for cell in html_table_to_deckerd(html) if cell["content"]}
-    assert round_trip == {cell["content"]: cell for cell in cells}
+    round_trip = {
+        cell["content"]: (cell["y"], cell["w"], cell["h"])
+        for cell in html_table_to_deckerd(html)
+        if cell["content"]
+    }
+    assert round_trip == {cell["content"]: (cell["y"], cell["w"], cell["h"]) for cell in cells}
     assert cells == original

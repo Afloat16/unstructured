@@ -39,7 +39,44 @@ jobs:
           print("renderer", inspect.getsourcefile(cells_to_html))
           assert importlib.metadata.version("unstructured-inference") == "1.6.12"
       - name: Fetch reviewed production source
-        run: git fetch --depth=1 origin 85291513bb5dfbfcf72c8f8bd68cd4b564530745
+        run: git fetch --depth=1 origin 85291513bb5dfbfcf72c8f8bd68cd4b564530745 ad56303cfae517612afcd5db85d3b4e303aa0d03
+      - name: Compare sparse-case HTML with the original base
+        shell: python
+        run: |
+          import subprocess
+          from unstructured.metrics.table.table_extraction import deckerd_table_to_html
+
+          cells = [
+              {"x": 0, "y": 0, "w": 4, "h": 2, "content": "r0c0"},
+              {"x": 4, "y": 0, "w": 1, "h": 1, "content": "r0c4"},
+              {"x": 4, "y": 1, "w": 1, "h": 3, "content": "r1c4"},
+          ]
+          covered = {
+              (x, y) for cell in cells
+              for x in range(cell["x"], cell["x"] + cell["w"])
+              for y in range(cell["y"], cell["y"] + cell["h"])
+          }
+          cells.extend(
+              {"x": x, "y": y, "w": 1, "h": 1, "content": f"r{y}c{x}"}
+              for y in range(5) for x in range(5)
+              if (x, y) not in covered and (x, y) != (0, 3)
+          )
+          original = subprocess.check_output([
+              "git", "show",
+              "ad56303cfae517612afcd5db85d3b4e303aa0d03:unstructured/metrics/table/table_extraction.py",
+          ])
+          namespace = {"__name__": "original_table_extraction"}
+          exec(compile(original, "<original_table_extraction>", "exec"), namespace)
+          baseline_html = namespace["deckerd_table_to_html"](cells)
+          assert baseline_html == deckerd_table_to_html(cells)
+          baseline_cells = {
+              cell["content"]: cell
+              for cell in namespace["html_table_to_deckerd"](baseline_html) if cell["content"]
+          }
+          assert baseline_cells["r2c0"]["x"] == 1
+          assert baseline_cells["r2c0"]["y"] == 2
+          print("Original base and candidate emit identical sparse-case HTML.")
+          print("The original importer already maps r2c0 to x=1, y=2.")
       - name: Reproduce the staggered and chained header regressions
         shell: python
         run: |
