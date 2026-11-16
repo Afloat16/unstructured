@@ -1,0 +1,84 @@
+name: Prodigy CSV and quoted header validation
+
+on:
+  push:
+    branches: [validation/20261116-prodigy-quoted-header]
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          sparse-checkout: |
+            unstructured
+            test_unstructured
+            example-docs
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install public API dependencies
+        run: >-
+          python -m pip install -e '.[chunking-tokens,docx]'
+          'pytest>=9,<10' pytest-mock 'ruff>=0.15,<1' 'pandas>=2,<3'
+      - name: Check changed-file style
+        run: |
+          ruff check unstructured/staging/prodigy.py unstructured/partition/csv.py test_unstructured/staging/test_prodigy_csv_columns.py test_unstructured/partition/test_quoted_header_eof.py
+          ruff format --check unstructured/staging/prodigy.py unstructured/partition/csv.py test_unstructured/staging/test_prodigy_csv_columns.py test_unstructured/partition/test_quoted_header_eof.py
+      - name: Fetch the pinned original production source
+        run: git fetch --depth=1 origin ac932052e6e0ba3feab8a6e96b6d4480218e009f
+      - name: Reproduce the same regression cases against the original source
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess
+          import sys
+          import xml.etree.ElementTree as ET
+
+          files = ["unstructured/staging/prodigy.py", "unstructured/partition/csv.py"]
+          saved = {name: Path(name).read_bytes() for name in files}
+          try:
+              for name in files:
+                  Path(name).write_bytes(subprocess.check_output(["git", "show", f"ac932052e6e0ba3feab8a6e96b6d4480218e009f:{name}"]))
+              result = subprocess.run([sys.executable, "-m", "pytest", "-q",
+                  "test_unstructured/staging/test_prodigy_csv_columns.py",
+                  "test_unstructured/partition/test_quoted_header_eof.py",
+                  "--junitxml=baseline.xml"])
+              report = ET.parse("baseline.xml").getroot()
+              assert result.returncode == 1, result.returncode
+              assert len(report.findall(".//failure")) == 27
+              assert len(report.findall(".//testcase")) == 39
+              assert not report.findall(".//error")
+          finally:
+              for name, content in saved.items():
+                  Path(name).write_bytes(content)
+      - name: Run regression cases and neighboring public API suites
+        run: >-
+          python -m pytest -q
+          test_unstructured/staging/test_prodigy_csv_columns.py
+          test_unstructured/partition/test_quoted_header_eof.py
+          test_unstructured/staging/test_prodigy.py
+          test_unstructured/partition/test_csv.py
+          test_unstructured/partition/test_tsv.py
+          --junitxml=results.xml
+      - name: Record source and dependency identities
+        if: always()
+        run: |
+          git rev-parse HEAD
+          git diff --exit-code
+          python --version
+          python -m pip freeze
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prodigy-quoted-header-results
+          path: |
+            baseline.xml
+            results.xml
