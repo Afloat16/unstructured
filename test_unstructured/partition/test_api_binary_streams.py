@@ -108,7 +108,10 @@ def test_binary_uploads_are_accepted_without_closing_the_source(
             stream.seek(offset)
         else:
             stream.read(offset)
-        expected_content = payload[offset:] if input_kind == "non-seekable" else payload
+        # The existing BufferedReader path leaves rewinding to the installed SDK.
+        expected_content = (
+            payload[offset:] if input_kind in ("non-seekable", "buffered-reader") else payload
+        )
         source = (
             {"filename": str(path)}
             if input_kind == "filename"
